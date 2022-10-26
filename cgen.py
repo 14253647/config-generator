@@ -4,7 +4,7 @@ import logging
 import os
 import yaml
 
-from typing import List
+from typing import List, Dict, Optional
 
 from jinja2 import Environment, FileSystemLoader, TemplateSyntaxError, TemplateError
 from jinja_filters import j2_base, j2_camel_case, j2_pascal_case, j2_snake_case, j2_is_type
@@ -12,7 +12,7 @@ from jinja_filters import j2_base, j2_camel_case, j2_pascal_case, j2_snake_case,
 from spec_types import ArrayType, ObjectType, ObjectField, Type
 from spec_types import Constraint
 from spec_types import load_type, load_constraints
-
+from doc import create_render_data
 #
 #
 #
@@ -66,20 +66,19 @@ class Loader:
 
 
 def sort_type(types: List[Type], current: Type) -> List[Type]:
-    sorted = []
-
+    sorted_ = []
     if isinstance(current, ArrayType):
-        sorted.extend(sort_type(types, current.item_type))
+        sorted_.extend(sort_type(types, current.item_type))
         # sorted.append(current)
     elif isinstance(current, ObjectType):
         for field in current.fields:
-            sorted.extend(sort_type(types, field.type))
+            sorted_.extend(sort_type(types, field.type))
 
     for t in types:
         if t.name == current.name:
             types.remove(t)
-            sorted.append(current)
-    return sorted
+            sorted_.append(current)
+    return sorted_
 
 
 # def sort_type2(current: Type, types: List[Type]) -> List[Type]:
@@ -93,32 +92,32 @@ def sort_type(types: List[Type], current: Type) -> List[Type]:
 #     return sorted
 
 
-def sort_types(types: List[Type], deps_first: bool = True) -> List[Type]:
+def sort_types(types: List[Type]) -> List[Type]:
     unsorted = types[:]
-    sorted = []
+    sorted_ = []
     while len(unsorted) > 0:
-        sorted.extend(sort_type(unsorted, unsorted[0]))
-    return sorted
+        sorted_.extend(sort_type(unsorted, unsorted[0]))
+    return sorted_
 
 
-def load_types(typesDict: dict(), elem: str) -> List[Type]:
+def load_types(types_dict: Dict, elem: str) -> List[Type]:
     types = []
-    for key, value in typesDict[elem].items():
-        t = load_type(typesDict, key, value)
+    for key, value in types_dict[elem].items():
+        t = load_type(types_dict, key, value)
         if t:
             types.append(t)
     return types
 
 
 def assign_constraints(types: List[Type], elements: List[Type], constraints: List[Constraint]):
-    def find_elem(data: List[Type], path: str) -> Type:
+    def find_elem(data: List[Type], path: str) -> Optional[Type]:
         name = path.split('/')[-1]
         for x in data:
             if x.name == name or x.alias == name:
                 return x
         return None
 
-    def find_type(data: List[Type], path: str) -> Type:
+    def find_type(data: List[Type], path: str) -> Optional[Type]:
         name = path.split('/')[-1]
         for x in data:
             if not isinstance(x, ObjectType):
@@ -154,11 +153,11 @@ def render(env: Environment, template_file: str, output_path: str, data):
     template = env.get_template(template_file + '.j2')
     try:
         output = template.render(data)
-    except TemplateSyntaxError as error:
-        logging.error(f'Template syntax error ({error.filename}, {error.lineno}): {error.message}')
+    except TemplateSyntaxError as e:
+        logging.error(f'Template syntax error ({e.filename}, {e.lineno}): {e.message}')
         raise
-    except TemplateError as error:
-        logging.error(f'Template error: {error.message}')
+    except TemplateError as e:
+        logging.error(f'Template error: {e.message}')
         raise
 
     try:
@@ -183,7 +182,7 @@ def config_generator(definition: str, template_path: str, output_path: str) -> i
         loader.load(definition)
 
         types = load_types(loader.data, 'types')
-        types = sort_types(types, deps_first=True)
+        types = sort_types(types)
         elements = load_types(loader.data, 'elements')
 
         constraints = load_constraints(loader.data)
@@ -205,10 +204,13 @@ def config_generator(definition: str, template_path: str, output_path: str) -> i
 
         render_data['config'] = ObjectType(
             name='config',
-            type='object',
+            type_='object',
             description='Configuration',
-            fields=[ObjectField(e.alias, e, e.description, e.required) for e in elements]
+            fields=[ObjectField(e.alias, e, e.description, e.required if hasattr(e, 'required') else False) for e in
+                    elements]
         )
+
+        docs = render_data['config'].doc('config')
 
         type_names = set([t.name for t in types])
         elem_names = set([e.name for e in elements])
@@ -232,11 +234,18 @@ def config_generator(definition: str, template_path: str, output_path: str) -> i
             if not file_name.startswith('_'):
                 render(env, file_name, output_path, render_data)
 
+        file_loader = FileSystemLoader("html-doc")
+        env = Environment(loader=file_loader)
+        for file_path in glob.glob(os.path.join(os.getcwd(), "html-doc", '*.j2')):
+            file_name = os.path.splitext(os.path.basename(file_path))[0]
+            if not file_name.startswith('_'):
+                render(env, file_name, output_path, create_render_data(docs))
         return 0
-    except TemplateSyntaxError as error:
-        logging.error(f'Template syntax error at {error.filename}:{error.lineno}:\n{error}')
-    except Exception as error:
-        logging.error(f'Error: {error}')
+
+    except TemplateSyntaxError as e:
+        logging.error(f'Template syntax error at {e.filename}:{e.lineno}:\n{e}')
+    except Exception as e:
+        logging.error(f'Error: {e}')
     return 1
 
 
