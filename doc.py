@@ -14,7 +14,6 @@ def create_render_data(docs: List[DocEntry]) -> Dict:
     sections = {}
     for d in docs:
         s = d.xpath.split('/')
-        print(f'{s}')
         if len(s) < 2:
             if s[0] not in sections.keys():
                 sections[s[0]] = []

@@ -2,7 +2,10 @@ import argparse
 import glob
 import logging
 import os
+import shutil
+
 import yaml
+from pathlib import Path
 
 from typing import List, Dict, Optional
 
@@ -13,6 +16,8 @@ from spec_types import ArrayType, ObjectType, ObjectField, Type
 from spec_types import Constraint
 from spec_types import load_type, load_constraints
 from doc import create_render_data
+
+
 #
 #
 #
@@ -59,6 +64,7 @@ class Loader:
             else:
                 destination[key] = value
         return destination
+
 
 #
 #
@@ -139,6 +145,7 @@ def assign_constraints(types: List[Type], elements: List[Type], constraints: Lis
         # assign to scope object
         elem.constraints.append(cst)
 
+
 #
 #
 #
@@ -169,6 +176,7 @@ def render(env: Environment, template_file: str, output_path: str, data):
 
     with open(output_file, 'w') as stream:
         stream.write(output)
+
 
 #
 #
@@ -234,9 +242,13 @@ def config_generator(definition: str, template_path: str, output_path: str) -> i
             if not file_name.startswith('_'):
                 render(env, file_name, output_path, render_data)
 
-        file_loader = FileSystemLoader("html-doc")
+        for file_path in glob.glob(os.path.join(os.getcwd(), template_path, '*.hpp')):
+            shutil.copy2(file_path, Path(output_path) / Path(file_path).name)
+
+        doc_template_path = Path(template_path).parent.absolute() / "html-doc"
+        file_loader = FileSystemLoader(doc_template_path)
         env = Environment(loader=file_loader)
-        for file_path in glob.glob(os.path.join(os.getcwd(), "html-doc", '*.j2')):
+        for file_path in glob.glob(os.path.join(os.getcwd(), doc_template_path, '*.j2')):
             file_name = os.path.splitext(os.path.basename(file_path))[0]
             if not file_name.startswith('_'):
                 render(env, file_name, output_path, create_render_data(docs))
@@ -252,10 +264,13 @@ def config_generator(definition: str, template_path: str, output_path: str) -> i
 def main() -> int:
     parser = argparse.ArgumentParser(description='Config generator')
     parser.add_argument('definition', type=str, help='definition file')
-    parser.add_argument('--template', type=str, default='template', help='template path')
+    parser.add_argument('--template', type=str, nargs='+', help='template path',
+                        default=[Path(__file__).parent.absolute() / 'xsd',
+                                 Path(__file__).parent.absolute() / 'cpp-xmlwrp'])
     parser.add_argument('--output', type=str, default='out', help='output path')
     args = parser.parse_args()
-    return config_generator(args.definition, args.template, args.output)
+    rv = [config_generator(args.definition, t, args.output) for t in args.template]
+    return max(rv) if rv else 1
 
 
 if __name__ == '__main__':
